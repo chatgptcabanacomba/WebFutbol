@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Visor de Jugador - Prototipo</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    video, iframe { max-width: 100%; margin-top: 1em; }
+    #video-container { position: relative; display: inline-block; }
+    #marcadorCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+    #progressBarContainer { width: 100%; background: #ccc; height: 20px; display: none; margin-top: 1em; }
+    #progressBar { width: 0%; height: 100%; background: #4caf50; }
+  </style>
+</head>
+<body>
+  <h1>Visor de Jugador (Prototipo)</h1>
+
+  <label>Subir video local:
+    <input type="file" id="videoFile" accept="video/mp4">
+  </label><br><br>
+
+  <label>O pegar enlace de YouTube:
+    <input type="text" id="youtubeURL" placeholder="https://www.youtube.com/watch?v=..." size="50">
+    <button onclick="descargarDesdeBackend()">Descargar y cargar</button>
+  </label><br><br>
+
+  <div id="progressBarContainer">
+    <div id="progressBar"></div>
+  </div>
+
+  <label>Minuto inicio: <input type="number" id="startMin" value="0"></label>
+  <label>Minuto fin: <input type="number" id="endMin" value="1"></label>
+  <button onclick="setPlaybackRange()">Reproducir Fragmento</button><br><br>
+
+  <div id="video-container">
+    <video id="localVideo" width="640" height="360" controls style="margin-top: 20px;"></video>
+    <canvas id="marcadorCanvas"></canvas>
+  </div><br>
+
+  <button onclick="downloadClicks()">Descargar marcajes (.json)</button>
+
+  <script>
+    let clicks = [];
+    const video = document.getElementById("localVideo");
+    const canvas = document.getElementById("marcadorCanvas");
+    const ctx = canvas.getContext("2d");
+    let currentVideoType = null;
+    let progressInterval = null;
+
+    document.getElementById("videoFile").addEventListener("change", function(e) {
+      const file = e.target.files[0];
+      if (file) {
+        video.src = URL.createObjectURL(file);
+        video.style.display = "block";
+        canvas.width = video.width;
+        canvas.height = video.height;
+        currentVideoType = "local";
+      }
+    });
+
+    function descargarDesdeBackend() {
+      const url = document.getElementById("youtubeURL").value;
+      const formData = new FormData();
+      formData.append("url", url);
+
+      document.getElementById("progressBarContainer").style.display = "block";
+      document.getElementById("progressBar").style.width = "0%";
+
+      progressInterval = setInterval(actualizarProgreso, 1000);
+
+      fetch("http://127.0.0.1:8000/descargar", {
+        method: "POST",
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        clearInterval(progressInterval);
+        if (data.ruta) {
+          video.src = data.ruta;
+          video.load();
+          video.style.display = "block";
+          video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          }
+          currentVideoType = "local";
+        } else {
+          alert("Error al descargar el vídeo: " + JSON.stringify(data));
+        }
+        document.getElementById("progressBarContainer").style.display = "none";
+      })
+      .catch(err => {
+        clearInterval(progressInterval);
+        alert("Error al contactar con el servidor: " + err);
+        document.getElementById("progressBarContainer").style.display = "none";
+      });
+    }
+
+    function actualizarProgreso() {
+      fetch("http://127.0.0.1:8000/progreso")
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.porcentaje !== undefined) {
+            document.getElementById("progressBar").style.width = data.porcentaje + "%";
+          }
+        });
+    }
+
+    function setPlaybackRange() {
+      const start = parseInt(document.getElementById("startMin").value) * 60;
+      const end = parseInt(document.getElementById("endMin").value) * 60;
+      if (currentVideoType === "local") {
+        video.currentTime = start;
+        video.play();
+        const interval = setInterval(() => {
+          if (video.currentTime >= end) {
+            video.pause();
+            clearInterval(interval);
+          }
+        }, 500);
+      }
+    }
+
+    canvas.addEventListener("click", function(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      let time = 0;
+      if (currentVideoType === "local") {
+        time = video.currentTime;
+      }
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, 2 * Math.PI);
+      ctx.fillStyle = "red";
+      ctx.fill();
+      clicks.push({ time: time.toFixed(2), x: x.toFixed(1), y: y.toFixed(1) });
+    });
+
+    function downloadClicks() {
+      const blob = new Blob([JSON.stringify(clicks, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "marcajes.json";
+      a.click();
+    }
+  </script>
+</body>
+</html>
